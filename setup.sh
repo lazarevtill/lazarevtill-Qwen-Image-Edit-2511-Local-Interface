@@ -17,6 +17,10 @@ NC='\033[0m' # No Color
 HOST="127.0.0.1"
 PORT="7860"
 DO_RESET=false
+FORCE_DEVICE=""
+FOUND_CUDA=false
+FOUND_XPU=false
+FOUND_ROCM=false
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -35,6 +39,22 @@ while [[ $# -gt 0 ]]; do
             ;;
         --reset)
             DO_RESET=true
+            shift
+            ;;
+        --cuda)
+            FORCE_DEVICE="cuda"
+            shift
+            ;;
+        --xpu)
+            FORCE_DEVICE="xpu"
+            shift
+            ;;
+        --rocm)
+            FORCE_DEVICE="rocm"
+            shift
+            ;;
+        --cpu)
+            FORCE_DEVICE="cpu"
             shift
             ;;
         *)
@@ -91,6 +111,7 @@ start_app() {
     echo " Press Ctrl+C to stop the server"
     echo ""
     echo " TIP: If something goes wrong, run: ./setup.sh --reset"
+    echo " TIP: Force device with: ./setup.sh --cuda or --xpu or --cpu"
     echo ""
     python app.py --host "$HOST" --port "$PORT"
 }
@@ -230,93 +251,108 @@ if command_exists nvidia-smi; then
     NVIDIA_GPU=$(nvidia-smi -L 2>/dev/null | head -n1)
     if [ -n "$NVIDIA_GPU" ]; then
         echo "       [FOUND] $NVIDIA_GPU"
-        DEVICE_TYPE="cuda"
-        TORCH_INDEX_URL="https://download.pytorch.org/whl/cu121"
+        FOUND_CUDA=true
     fi
 fi
 
 # -----------------------------------------------------------------------------
-# Check for Intel GPU (if no NVIDIA found)
+# Check for Intel GPU
 # -----------------------------------------------------------------------------
-if [ "$DEVICE_TYPE" = "cpu" ]; then
-    echo "       Checking for Intel GPU..."
+echo "       Checking for Intel GPU..."
 
-    INTEL_GPU_FOUND=false
+INTEL_GPU_FOUND=false
 
-    # Method 1: Check via lspci (Linux)
-    if command_exists lspci; then
-        INTEL_GPU=$(lspci | grep -i "VGA\|3D\|Display" | grep -i "Intel" | head -n1)
-        if [ -n "$INTEL_GPU" ]; then
-            echo "       [FOUND] Intel: $INTEL_GPU"
-            INTEL_GPU_FOUND=true
-        fi
+# Method 1: Check via lspci (Linux)
+if command_exists lspci; then
+    INTEL_GPU=$(lspci | grep -i "VGA\|3D\|Display" | grep -i "Intel" | head -n1)
+    if [ -n "$INTEL_GPU" ]; then
+        echo "       [FOUND] Intel: $INTEL_GPU"
+        INTEL_GPU_FOUND=true
     fi
+fi
 
-    # Method 2: Check /sys/class/drm (Linux)
-    if [ "$INTEL_GPU_FOUND" = false ] && [ -d "/sys/class/drm" ]; then
-        for card in /sys/class/drm/card*/device/vendor; do
-            if [ -f "$card" ]; then
-                VENDOR=$(cat "$card" 2>/dev/null)
-                # Intel vendor ID is 0x8086
-                if [ "$VENDOR" = "0x8086" ]; then
-                    echo "       [FOUND] Intel GPU via sysfs"
-                    INTEL_GPU_FOUND=true
-                    break
-                fi
+# Method 2: Check /sys/class/drm (Linux)
+if [ "$INTEL_GPU_FOUND" = false ] && [ -d "/sys/class/drm" ]; then
+    for card in /sys/class/drm/card*/device/vendor; do
+        if [ -f "$card" ]; then
+            VENDOR=$(cat "$card" 2>/dev/null)
+            # Intel vendor ID is 0x8086
+            if [ "$VENDOR" = "0x8086" ]; then
+                echo "       [FOUND] Intel GPU via sysfs"
+                INTEL_GPU_FOUND=true
+                break
             fi
-        done
-    fi
-
-    # Method 3: Check via system_profiler (macOS)
-    if [ "$INTEL_GPU_FOUND" = false ] && [ "$OS_TYPE" = "Darwin" ]; then
-        INTEL_GPU=$(system_profiler SPDisplaysDataType 2>/dev/null | grep -i "Intel" | head -n1)
-        if [ -n "$INTEL_GPU" ]; then
-            echo "       [FOUND] Intel: $INTEL_GPU"
-            INTEL_GPU_FOUND=true
         fi
-    fi
+    done
+fi
 
-    # Set XPU if Intel GPU found
-    if [ "$INTEL_GPU_FOUND" = true ]; then
-        DEVICE_TYPE="xpu"
-        TORCH_INDEX_URL="https://download.pytorch.org/whl/xpu"
+# Method 3: Check via system_profiler (macOS)
+if [ "$INTEL_GPU_FOUND" = false ] && [ "$OS_TYPE" = "Darwin" ]; then
+    INTEL_GPU=$(system_profiler SPDisplaysDataType 2>/dev/null | grep -i "Intel" | head -n1)
+    if [ -n "$INTEL_GPU" ]; then
+        echo "       [FOUND] Intel: $INTEL_GPU"
+        INTEL_GPU_FOUND=true
     fi
+fi
+
+if [ "$INTEL_GPU_FOUND" = true ]; then
+    FOUND_XPU=true
 fi
 
 # -----------------------------------------------------------------------------
 # Check for AMD GPU (ROCm)
 # -----------------------------------------------------------------------------
-if [ "$DEVICE_TYPE" = "cpu" ]; then
-    echo "       Checking for AMD GPU (ROCm)..."
+echo "       Checking for AMD GPU (ROCm)..."
 
-    if command_exists rocm-smi; then
-        AMD_GPU=$(rocm-smi --showproductname 2>/dev/null | grep -i "GPU" | head -n1)
-        if [ -n "$AMD_GPU" ]; then
-            echo "       [FOUND] AMD: $AMD_GPU"
-            DEVICE_TYPE="rocm"
-            TORCH_INDEX_URL="https://download.pytorch.org/whl/rocm6.0"
-        fi
-    elif command_exists rocminfo; then
-        AMD_GPU=$(rocminfo 2>/dev/null | grep "Marketing Name" | head -n1 | cut -d: -f2 | xargs)
-        if [ -n "$AMD_GPU" ]; then
-            echo "       [FOUND] AMD: $AMD_GPU"
-            DEVICE_TYPE="rocm"
-            TORCH_INDEX_URL="https://download.pytorch.org/whl/rocm6.0"
-        fi
+if command_exists rocm-smi; then
+    AMD_GPU=$(rocm-smi --showproductname 2>/dev/null | grep -i "GPU" | head -n1)
+    if [ -n "$AMD_GPU" ]; then
+        echo "       [FOUND] AMD: $AMD_GPU"
+        FOUND_ROCM=true
+    fi
+elif command_exists rocminfo; then
+    AMD_GPU=$(rocminfo 2>/dev/null | grep "Marketing Name" | head -n1 | cut -d: -f2 | xargs)
+    if [ -n "$AMD_GPU" ]; then
+        echo "       [FOUND] AMD: $AMD_GPU"
+        FOUND_ROCM=true
     fi
 fi
 
 # -----------------------------------------------------------------------------
-# Fallback to CPU
+# Determine which device to use
 # -----------------------------------------------------------------------------
-if [ "$DEVICE_TYPE" = "cpu" ]; then
-    echo "       [INFO] No GPU found, using CPU mode."
+if [ -n "$FORCE_DEVICE" ]; then
+    DEVICE_TYPE="$FORCE_DEVICE"
+    echo ""
+    echo "       [FORCED] Using $FORCE_DEVICE as requested"
+elif [ "$FOUND_CUDA" = true ]; then
+    DEVICE_TYPE="cuda"
+elif [ "$FOUND_XPU" = true ]; then
+    DEVICE_TYPE="xpu"
+elif [ "$FOUND_ROCM" = true ]; then
+    DEVICE_TYPE="rocm"
+else
+    DEVICE_TYPE="cpu"
+    echo "       [INFO] No supported GPU found, using CPU mode."
     echo "              Note: CPU is very slow for image generation."
 fi
 
+# Set PyTorch index URL based on device
+case $DEVICE_TYPE in
+    "cuda") TORCH_INDEX_URL="https://download.pytorch.org/whl/cu121" ;;
+    "xpu") TORCH_INDEX_URL="https://download.pytorch.org/whl/xpu" ;;
+    "rocm") TORCH_INDEX_URL="https://download.pytorch.org/whl/rocm6.0" ;;
+esac
+
 echo ""
 echo "=================================================="
-echo " Detected Device: $DEVICE_TYPE"
+echo " Available GPUs:"
+[ "$FOUND_CUDA" = true ] && echo "   - NVIDIA CUDA"
+[ "$FOUND_XPU" = true ] && echo "   - Intel XPU"
+[ "$FOUND_ROCM" = true ] && echo "   - AMD ROCm"
+echo "   - CPU (always available)"
+echo ""
+echo " Selected Device: $DEVICE_TYPE"
 echo "=================================================="
 echo ""
 
