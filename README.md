@@ -9,6 +9,7 @@ A local Gradio interface for running [Qwen-Image-Edit-2511](https://huggingface.
 - **Local inference** - Run entirely on your machine, no cloud required
 - **Multiple quantization options** - From Q2_K (7.2GB) to full precision BF16 (40.9GB)
 - **Multi-GPU support** - NVIDIA CUDA, Intel XPU (Arc GPUs), AMD ROCm, and CPU
+- **Multi-GPU detection** - Detects all available GPUs, allows forcing specific device
 - **Model management** - Download, delete, and manage models from the UI
 - **Image saving** - Automatically saves all input/output images
 - **Network mode** - Share on local network for access from other devices
@@ -18,13 +19,18 @@ A local Gradio interface for running [Qwen-Image-Edit-2511](https://huggingface.
 ### Windows
 
 ```batch
-# First run - installs everything and starts the app
+:: First run - installs everything and starts the app
 setup.bat
 
-# Network mode (accessible from other devices)
+:: Network mode (accessible from other devices)
 setup.bat --share
 
-# Clean reinstall if something breaks
+:: Force specific GPU
+setup.bat --cuda      :: Use NVIDIA GPU
+setup.bat --xpu       :: Use Intel Arc GPU
+setup.bat --cpu       :: Use CPU only
+
+:: Clean reinstall if something breaks
 setup.bat --reset
 ```
 
@@ -39,6 +45,12 @@ chmod +x setup.sh
 
 # Network mode
 ./setup.sh --share
+
+# Force specific GPU
+./setup.sh --cuda      # Use NVIDIA GPU
+./setup.sh --xpu       # Use Intel Arc GPU
+./setup.sh --rocm      # Use AMD GPU (Linux only)
+./setup.sh --cpu       # Use CPU only
 
 # Clean reinstall
 ./setup.sh --reset
@@ -99,6 +111,24 @@ Options:
   --local              Local only mode (default)
   --port PORT          Custom port number
   --reset              Remove .venv and reinstall everything
+  --cuda               Force NVIDIA CUDA device
+  --xpu                Force Intel XPU device
+  --rocm               Force AMD ROCm device (Linux only)
+  --cpu                Force CPU mode
+```
+
+### Multi-GPU Systems
+
+On systems with multiple GPUs (e.g., NVIDIA + Intel Arc), the setup script will:
+1. Detect ALL available GPUs
+2. Display them in the console
+3. Auto-select by priority: CUDA > XPU > ROCm > CPU
+
+To override the automatic selection, use the force flags:
+```bash
+# System has both NVIDIA and Intel Arc, but you want to use Intel:
+setup.bat --xpu
+./setup.sh --xpu
 ```
 
 ## Directory Structure
@@ -145,6 +175,11 @@ img/
   ```bash
   pip install intel-extension-for-pytorch
   ```
+
+### Only NVIDIA detected on multi-GPU system
+- The setup scripts now detect all GPUs automatically
+- Use `--xpu` flag to force Intel Arc GPU
+- Use `--cpu` flag to force CPU mode
 
 ### Virtual environment issues
 - Run with `--reset` flag to clean reinstall:
