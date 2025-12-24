@@ -226,9 +226,10 @@ echo "       Operating System: $OS_TYPE"
 echo "       Checking for NVIDIA GPU..."
 
 if command_exists nvidia-smi; then
-    NVIDIA_GPU=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -n1)
+    # Use nvidia-smi -L which works on all versions
+    NVIDIA_GPU=$(nvidia-smi -L 2>/dev/null | head -n1)
     if [ -n "$NVIDIA_GPU" ]; then
-        echo "       [FOUND] NVIDIA: $NVIDIA_GPU"
+        echo "       [FOUND] $NVIDIA_GPU"
         DEVICE_TYPE="cuda"
         TORCH_INDEX_URL="https://download.pytorch.org/whl/cu121"
     fi

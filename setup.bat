@@ -102,15 +102,15 @@ echo.
 
 :: Check for NVIDIA GPU using nvidia-smi
 echo       Checking for NVIDIA GPU...
-nvidia-smi --query-gpu=name --format=csv,noheader >nul 2>&1
+nvidia-smi >nul 2>&1
 if !errorlevel! equ 0 (
-    for /f "tokens=*" %%i in ('nvidia-smi --query-gpu=name --format=csv,noheader 2^>nul') do (
-        echo       [FOUND] NVIDIA: %%i
+    for /f "tokens=*" %%i in ('nvidia-smi -L 2^>nul') do (
+        echo       [FOUND] %%i
+        set "DEVICE_TYPE=cuda"
+        set "TORCH_INDEX_URL=https://download.pytorch.org/whl/cu121"
     )
-    set "DEVICE_TYPE=cuda"
-    set "TORCH_INDEX_URL=https://download.pytorch.org/whl/cu121"
-    goto show_config
 )
+if "!DEVICE_TYPE!"=="cuda" goto show_config
 
 :: Check for Intel GPU using PowerShell
 echo       Checking for Intel GPU...
