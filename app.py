@@ -904,6 +904,10 @@ def create_ui():
             ).then(
                 fn=get_all_model_status,
                 outputs=[downloaded_models_md],
+            ).then(
+                fn=check_model_status,
+                inputs=[model_dropdown],
+                outputs=[model_status_text],
             )
 
             delete_button.click(
@@ -913,11 +917,19 @@ def create_ui():
             ).then(
                 fn=get_all_model_status,
                 outputs=[downloaded_models_md],
+            ).then(
+                fn=check_model_status,
+                inputs=[model_dropdown],
+                outputs=[model_status_text],
             )
 
             refresh_button.click(
                 fn=get_all_model_status,
                 outputs=[downloaded_models_md],
+            ).then(
+                fn=check_model_status,
+                inputs=[model_dropdown],
+                outputs=[model_status_text],
             )
 
             # Event handlers for Devices tab
@@ -927,6 +939,28 @@ def create_ui():
             )
 
     return demo
+
+
+def download_base_pipeline():
+    """Download/cache the base pipeline components (tokenizer, text encoder, scheduler, etc.)."""
+    from huggingface_hub import snapshot_download
+
+    print("\nChecking base pipeline components...")
+
+    try:
+        # Download all pipeline components except the transformer (we use GGUF for that)
+        # This caches: tokenizer, text_encoder, scheduler, vae, etc.
+        snapshot_download(
+            repo_id=BASE_MODEL_REPO,
+            ignore_patterns=["transformer/*", "*.safetensors", "*.bin"],
+            local_dir_use_symlinks=False,
+        )
+        print("Base pipeline components ready.")
+        return True
+    except Exception as e:
+        print(f"Note: Could not pre-download pipeline components: {e}")
+        print("Components will be downloaded on first run.")
+        return False
 
 
 if __name__ == "__main__":
@@ -939,6 +973,8 @@ if __name__ == "__main__":
                         help="Port to bind to")
     parser.add_argument("--share", action="store_true",
                         help="Create a public Gradio link")
+    parser.add_argument("--skip-download", action="store_true",
+                        help="Skip downloading base pipeline on startup")
     args = parser.parse_args()
 
     # Print detected devices at startup
@@ -950,6 +986,10 @@ if __name__ == "__main__":
     for name, info in devices.items():
         print(f"  - {name}: {info['description']}")
     print("="*50)
+
+    # Download base pipeline components on startup
+    if not args.skip_download:
+        download_base_pipeline()
 
     if args.host == "0.0.0.0":
         print("\nNetwork mode enabled - accessible from other devices")
