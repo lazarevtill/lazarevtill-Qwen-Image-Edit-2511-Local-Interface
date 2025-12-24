@@ -1,0 +1,31 @@
+# Core dependencies
+gradio>=4.0.0
+numpy>=1.24.0
+pillow>=10.0.0
+huggingface_hub>=0.20.0
+
+# PyTorch - Install the appropriate version for your hardware:
+#
+# For NVIDIA CUDA:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+#
+# For Intel XPU (Arc GPUs):
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/xpu
+#
+# For CPU only:
+#   pip install torch torchvision
+#
+torch>=2.0.0
+
+# Diffusers and related
+diffusers>=0.32.0
+transformers>=4.40.0
+accelerate>=0.30.0
+sentencepiece>=0.1.99
+
+# GGUF support
+gguf>=0.6.0
+
+# Optional: Intel Extension for PyTorch (for Intel XPU optimization)
+# Uncomment if using Intel Arc GPUs:
+# intel-extension-for-pytorch>=2.1.0
