@@ -462,7 +462,7 @@ def load_pipeline(model_name: str, device_choice: str):
                 snapshot_download(
                     repo_id=BASE_MODEL_REPO,
                     local_dir=BASE_PIPELINE_DIR,
-                    ignore_patterns=["transformer/*", "*.safetensors", "*.bin"],
+                    ignore_patterns=["transformer/*"],
                     force_download=True,
                 )
 
@@ -1015,12 +1015,13 @@ def download_base_pipeline():
                 print("Retrying with force_download=True to fix corrupted cache...")
 
             # Download all pipeline components except the transformer (we use GGUF for that)
-            # This caches: tokenizer, text_encoder, scheduler, vae, etc.
+            # This includes: tokenizer, text_encoder (with weights!), scheduler, vae config, etc.
+            # Only exclude transformer/* folder since we load that from GGUF
             # Store in local models directory for clear organization
             snapshot_download(
                 repo_id=BASE_MODEL_REPO,
                 local_dir=BASE_PIPELINE_DIR,
-                ignore_patterns=["transformer/*", "*.safetensors", "*.bin"],
+                ignore_patterns=["transformer/*"],
                 force_download=force_download,
             )
             print("Base pipeline components ready.")
