@@ -425,11 +425,34 @@ def load_pipeline(model_name: str, device_choice: str):
     print("Loading full pipeline...")
 
     # Load the full pipeline with the quantized transformer
-    pipeline = QwenImageEditPlusPipeline.from_pretrained(
-        BASE_MODEL_REPO,
-        transformer=transformer,
-        torch_dtype=compute_dtype,
-    )
+    # Auto-retry with force_download if cache is corrupted
+    pipeline = None
+    for attempt in range(2):
+        try:
+            force_download = (attempt > 0)
+            if force_download:
+                print("Retrying with force_download=True to fix corrupted cache...")
+
+            pipeline = QwenImageEditPlusPipeline.from_pretrained(
+                BASE_MODEL_REPO,
+                transformer=transformer,
+                torch_dtype=compute_dtype,
+                force_download=force_download,
+            )
+            break  # Success, exit retry loop
+        except (OSError, EnvironmentError) as e:
+            error_msg = str(e).lower()
+            # Check if it's a corrupted file / consistency check error
+            if attempt == 0 and ("consistency check failed" in error_msg or
+                                  "corrupted" in error_msg or
+                                  "size" in error_msg and "should be" in error_msg):
+                print(f"Detected corrupted cache file: {e}")
+                continue  # Retry with force_download
+            else:
+                raise  # Re-raise if not a cache error or already retried
+
+    if pipeline is None:
+        raise RuntimeError("Failed to load pipeline after retries")
 
     # Move to device and enable optimizations
     if device_str == "cpu":
@@ -947,20 +970,42 @@ def download_base_pipeline():
 
     print("\nChecking base pipeline components...")
 
-    try:
-        # Download all pipeline components except the transformer (we use GGUF for that)
-        # This caches: tokenizer, text_encoder, scheduler, vae, etc.
-        snapshot_download(
-            repo_id=BASE_MODEL_REPO,
-            ignore_patterns=["transformer/*", "*.safetensors", "*.bin"],
-            local_dir_use_symlinks=False,
-        )
-        print("Base pipeline components ready.")
-        return True
-    except Exception as e:
-        print(f"Note: Could not pre-download pipeline components: {e}")
-        print("Components will be downloaded on first run.")
-        return False
+    # Try up to 2 times - second time with force_download if cache is corrupted
+    for attempt in range(2):
+        try:
+            force_download = (attempt > 0)
+            if force_download:
+                print("Retrying with force_download=True to fix corrupted cache...")
+
+            # Download all pipeline components except the transformer (we use GGUF for that)
+            # This caches: tokenizer, text_encoder, scheduler, vae, etc.
+            snapshot_download(
+                repo_id=BASE_MODEL_REPO,
+                ignore_patterns=["transformer/*", "*.safetensors", "*.bin"],
+                force_download=force_download,
+            )
+            print("Base pipeline components ready.")
+            return True
+
+        except (OSError, EnvironmentError) as e:
+            error_msg = str(e).lower()
+            # Check if it's a corrupted file / consistency check error
+            if attempt == 0 and ("consistency check failed" in error_msg or
+                                  "corrupted" in error_msg or
+                                  "size" in error_msg and "should be" in error_msg):
+                print(f"Detected corrupted cache file: {e}")
+                continue  # Retry with force_download
+            else:
+                print(f"Note: Could not pre-download pipeline components: {e}")
+                print("Components will be downloaded on first run.")
+                return False
+
+        except Exception as e:
+            print(f"Note: Could not pre-download pipeline components: {e}")
+            print("Components will be downloaded on first run.")
+            return False
+
+    return False
 
 
 if __name__ == "__main__":
