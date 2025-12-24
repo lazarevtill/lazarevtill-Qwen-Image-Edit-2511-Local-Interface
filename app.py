@@ -39,6 +39,7 @@ AVAILABLE_MODELS = {
 
 REPO_ID = "unsloth/Qwen-Image-Edit-2511-GGUF"
 BASE_MODEL_REPO = "Qwen/Qwen-Image-Edit-2511"
+BASE_PIPELINE_DIR = "./models/Qwen-Image-Edit-2511-base"
 
 # Global pipeline cache
 current_pipeline = None
@@ -328,6 +329,19 @@ def get_all_model_status() -> str:
     total_size = 0
     downloaded_count = 0
 
+    # Check base pipeline
+    base_pipeline_path = Path(BASE_PIPELINE_DIR)
+    if base_pipeline_path.exists() and (base_pipeline_path / "model_index.json").exists():
+        # Calculate base pipeline size
+        base_size = sum(f.stat().st_size for f in base_pipeline_path.rglob("*") if f.is_file()) / (1024**3)
+        lines.append(f"- **Base Pipeline**: {base_size:.2f} GB (tokenizer, scheduler, etc.)")
+        total_size += base_size
+    else:
+        lines.append("- **Base Pipeline**: *Not downloaded*")
+
+    lines.append("")  # Empty line separator
+
+    # Check GGUF models
     for model_name, filename in AVAILABLE_MODELS.items():
         local_path = models_path / filename
         if local_path.exists():
@@ -337,9 +351,9 @@ def get_all_model_status() -> str:
             lines.append(f"- **{model_name}**: {size_gb:.2f} GB")
 
     if downloaded_count == 0:
-        lines.append("*No models downloaded yet*")
+        lines.append("*No GGUF models downloaded yet*")
     else:
-        lines.append(f"\n**Total**: {downloaded_count} models, {total_size:.2f} GB")
+        lines.append(f"\n**Total**: {downloaded_count} GGUF models + base, {total_size:.2f} GB")
 
     return "\n".join(lines)
 
@@ -424,6 +438,15 @@ def load_pipeline(model_name: str, device_choice: str):
 
     print("Loading full pipeline...")
 
+    # Determine pipeline source - use local directory if available
+    local_pipeline_path = Path(BASE_PIPELINE_DIR)
+    if local_pipeline_path.exists() and (local_pipeline_path / "model_index.json").exists():
+        pipeline_source = str(local_pipeline_path)
+        print(f"Using local pipeline: {pipeline_source}")
+    else:
+        pipeline_source = BASE_MODEL_REPO
+        print(f"Using HuggingFace pipeline: {pipeline_source}")
+
     # Load the full pipeline with the quantized transformer
     # Auto-retry with force_download if cache is corrupted
     pipeline = None
@@ -433,11 +456,21 @@ def load_pipeline(model_name: str, device_choice: str):
             if force_download:
                 print("Retrying with force_download=True to fix corrupted cache...")
 
+            # If using local path and force_download needed, download fresh to local dir
+            if force_download and pipeline_source != BASE_MODEL_REPO:
+                from huggingface_hub import snapshot_download
+                snapshot_download(
+                    repo_id=BASE_MODEL_REPO,
+                    local_dir=BASE_PIPELINE_DIR,
+                    ignore_patterns=["transformer/*", "*.safetensors", "*.bin"],
+                    force_download=True,
+                )
+
             pipeline = QwenImageEditPlusPipeline.from_pretrained(
-                BASE_MODEL_REPO,
+                pipeline_source,
                 transformer=transformer,
                 torch_dtype=compute_dtype,
-                force_download=force_download,
+                force_download=force_download if pipeline_source == BASE_MODEL_REPO else False,
             )
             break  # Success, exit retry loop
         except (OSError, EnvironmentError) as e:
@@ -969,6 +1002,10 @@ def download_base_pipeline():
     from huggingface_hub import snapshot_download
 
     print("\nChecking base pipeline components...")
+    print(f"Location: {BASE_PIPELINE_DIR}")
+
+    # Ensure models directory exists
+    Path(MODELS_DIR).mkdir(exist_ok=True)
 
     # Try up to 2 times - second time with force_download if cache is corrupted
     for attempt in range(2):
@@ -979,8 +1016,10 @@ def download_base_pipeline():
 
             # Download all pipeline components except the transformer (we use GGUF for that)
             # This caches: tokenizer, text_encoder, scheduler, vae, etc.
+            # Store in local models directory for clear organization
             snapshot_download(
                 repo_id=BASE_MODEL_REPO,
+                local_dir=BASE_PIPELINE_DIR,
                 ignore_patterns=["transformer/*", "*.safetensors", "*.bin"],
                 force_download=force_download,
             )
