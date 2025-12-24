@@ -7,17 +7,18 @@ set "HOST=127.0.0.1"
 set "PORT=7860"
 set "DEVICE_TYPE=cpu"
 set "TORCH_INDEX_URL="
+set "SKIP_SETUP=0"
 
 :: Parse command line arguments
 :parse_args
-if "%~1"=="" goto :main
+if "%~1"=="" goto main
 if /i "%~1"=="--share" set "HOST=0.0.0.0"
 if /i "%~1"=="--public" set "HOST=0.0.0.0"
 if /i "%~1"=="--local" set "HOST=127.0.0.1"
 if /i "%~1"=="--port" set "PORT=%~2" & shift
 if /i "%~1"=="--reset" set "DO_RESET=1"
 shift
-goto :parse_args
+goto parse_args
 
 :main
 echo ==================================================
@@ -34,17 +35,20 @@ if "!DO_RESET!"=="1" (
 )
 
 :: Check if already installed
-if not exist ".venv\Scripts\python.exe" goto :do_setup
+if not exist ".venv\Scripts\python.exe" goto do_setup
 
 echo [CHECK] Checking installation...
 call .venv\Scripts\activate.bat 2>nul
 
 :: Check if key packages are installed
 .venv\Scripts\python.exe -c "import gradio; import diffusers; import torch" >nul 2>&1
-if !errorlevel! equ 0 (
+if !errorlevel! equ 0 set "SKIP_SETUP=1"
+
+if "!SKIP_SETUP!"=="1" (
     echo [OK] All packages installed. Starting application...
-    goto :start_application
+    goto start_application
 )
+
 echo [INFO] Some packages missing, continuing with setup...
 echo.
 
@@ -83,13 +87,6 @@ if exist .venv (
 echo.
 echo [3/6] Activating virtual environment...
 call .venv\Scripts\activate.bat 2>nul
-if !errorlevel! neq 0 (
-    echo [ERROR] Failed to activate virtual environment
-    echo.
-    echo TIP: Try running: setup.bat --reset
-    pause
-    exit /b 1
-)
 echo       Activated.
 
 :: Upgrade pip
@@ -112,10 +109,10 @@ if !errorlevel! equ 0 (
     )
     set "DEVICE_TYPE=cuda"
     set "TORCH_INDEX_URL=https://download.pytorch.org/whl/cu121"
-    goto :show_config
+    goto show_config
 )
 
-:: Check for Intel GPU using PowerShell (more reliable than wmic)
+:: Check for Intel GPU using PowerShell
 echo       Checking for Intel GPU...
 for /f "tokens=*" %%i in ('powershell -NoProfile -Command "Get-CimInstance Win32_VideoController | Where-Object { $_.Name -match 'Intel' } | Select-Object -ExpandProperty Name" 2^>nul') do (
     if not "%%i"=="" (
@@ -124,7 +121,7 @@ for /f "tokens=*" %%i in ('powershell -NoProfile -Command "Get-CimInstance Win32
         set "TORCH_INDEX_URL=https://download.pytorch.org/whl/xpu"
     )
 )
-if "!DEVICE_TYPE!"=="xpu" goto :show_config
+if "!DEVICE_TYPE!"=="xpu" goto show_config
 
 echo       [INFO] No GPU found, using CPU mode.
 echo              Note: CPU is very slow for image generation.
@@ -145,15 +142,18 @@ echo.
 echo       Installing PyTorch for !DEVICE_TYPE!...
 if "!DEVICE_TYPE!"=="cuda" (
     pip install torch torchvision torchaudio --index-url !TORCH_INDEX_URL!
-) else if "!DEVICE_TYPE!"=="xpu" (
+    goto install_deps
+)
+if "!DEVICE_TYPE!"=="xpu" (
     pip install torch torchvision torchaudio --index-url !TORCH_INDEX_URL!
     echo.
     echo       Installing Intel Extension for PyTorch...
     pip install intel-extension-for-pytorch 2>nul
-) else (
-    pip install torch torchvision torchaudio
+    goto install_deps
 )
+pip install torch torchvision torchaudio
 
+:install_deps
 echo.
 echo       Installing core dependencies...
 pip install gradio numpy pillow huggingface_hub

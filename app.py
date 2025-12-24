@@ -17,23 +17,24 @@ from datetime import datetime
 from huggingface_hub import hf_hub_download
 
 # Available GGUF quantization options from unsloth/Qwen-Image-Edit-2511-GGUF
+# Note: filenames are lowercase on HuggingFace
 AVAILABLE_MODELS = {
-    "Q2_K (7.22 GB) - Smallest": "Qwen-Image-Edit-2511-Q2_K.gguf",
-    "Q3_K_S (9.04 GB)": "Qwen-Image-Edit-2511-Q3_K_S.gguf",
-    "Q3_K_M (9.74 GB)": "Qwen-Image-Edit-2511-Q3_K_M.gguf",
-    "Q3_K_L (10.4 GB)": "Qwen-Image-Edit-2511-Q3_K_L.gguf",
-    "Q4_0 (11.9 GB)": "Qwen-Image-Edit-2511-Q4_0.gguf",
-    "Q4_K_S (12.3 GB)": "Qwen-Image-Edit-2511-Q4_K_S.gguf",
-    "Q4_1 (12.8 GB)": "Qwen-Image-Edit-2511-Q4_1.gguf",
-    "Q4_K_M (13.1 GB) - Recommended": "Qwen-Image-Edit-2511-Q4_K_M.gguf",
-    "Q5_K_S (14.3 GB)": "Qwen-Image-Edit-2511-Q5_K_S.gguf",
-    "Q5_0 (14.4 GB)": "Qwen-Image-Edit-2511-Q5_0.gguf",
-    "Q5_K_M (15 GB)": "Qwen-Image-Edit-2511-Q5_K_M.gguf",
-    "Q5_1 (15.4 GB)": "Qwen-Image-Edit-2511-Q5_1.gguf",
-    "Q6_K (16.8 GB) - High Quality": "Qwen-Image-Edit-2511-Q6_K.gguf",
-    "Q8_0 (21.8 GB)": "Qwen-Image-Edit-2511-Q8_0.gguf",
-    "BF16 (40.9 GB) - Full Precision": "Qwen-Image-Edit-2511-BF16.gguf",
-    "F16 (40.9 GB) - Full Precision": "Qwen-Image-Edit-2511-F16.gguf",
+    "Q2_K (7.22 GB) - Smallest": "qwen-image-edit-2511-Q2_K.gguf",
+    "Q3_K_S (9.04 GB)": "qwen-image-edit-2511-Q3_K_S.gguf",
+    "Q3_K_M (9.74 GB)": "qwen-image-edit-2511-Q3_K_M.gguf",
+    "Q3_K_L (10.4 GB)": "qwen-image-edit-2511-Q3_K_L.gguf",
+    "Q4_0 (11.9 GB)": "qwen-image-edit-2511-Q4_0.gguf",
+    "Q4_K_S (12.3 GB)": "qwen-image-edit-2511-Q4_K_S.gguf",
+    "Q4_1 (12.8 GB)": "qwen-image-edit-2511-Q4_1.gguf",
+    "Q4_K_M (13.1 GB) - Recommended": "qwen-image-edit-2511-Q4_K_M.gguf",
+    "Q5_K_S (14.3 GB)": "qwen-image-edit-2511-Q5_K_S.gguf",
+    "Q5_0 (14.4 GB)": "qwen-image-edit-2511-Q5_0.gguf",
+    "Q5_K_M (15 GB)": "qwen-image-edit-2511-Q5_K_M.gguf",
+    "Q5_1 (15.4 GB)": "qwen-image-edit-2511-Q5_1.gguf",
+    "Q6_K (16.8 GB) - High Quality": "qwen-image-edit-2511-Q6_K.gguf",
+    "Q8_0 (21.8 GB)": "qwen-image-edit-2511-Q8_0.gguf",
+    "BF16 (40.9 GB) - Full Precision": "qwen-image-edit-2511-BF16.gguf",
+    "F16 (40.9 GB) - Full Precision": "qwen-image-edit-2511-F16.gguf",
 }
 
 REPO_ID = "unsloth/Qwen-Image-Edit-2511-GGUF"
@@ -281,7 +282,6 @@ def download_model(model_name: str, progress=gr.Progress()) -> str:
             repo_id=REPO_ID,
             filename=filename,
             local_dir=MODELS_DIR,
-            local_dir_use_symlinks=False,
         )
 
         size_gb = Path(downloaded_path).stat().st_size / (1024**3)
@@ -360,7 +360,6 @@ def get_model_path(model_filename: str, models_dir: str = "./models") -> str:
         repo_id=REPO_ID,
         filename=model_filename,
         local_dir=models_dir,
-        local_dir_use_symlinks=False,
     )
     return downloaded_path
 
@@ -588,30 +587,7 @@ def create_ui():
     available_devices = get_device_choices()
     default_device = available_devices[0] if available_devices else "CPU"
 
-    css = """
-    #col-container {
-        margin: 0 auto;
-        max-width: 1200px;
-    }
-    .model-info {
-        padding: 10px;
-        background: #f0f0f0;
-        border-radius: 8px;
-        margin-bottom: 10px;
-    }
-    .download-status {
-        font-family: monospace;
-        white-space: pre-wrap;
-    }
-    .device-info {
-        padding: 8px;
-        background: #e8f4e8;
-        border-radius: 4px;
-        margin: 5px 0;
-    }
-    """
-
-    with gr.Blocks(css=css, title="Qwen-Image-Edit-2511 Local") as demo:
+    with gr.Blocks(title="Qwen-Image-Edit-2511 Local") as demo:
         with gr.Column(elem_id="col-container"):
             gr.Markdown("# Qwen-Image-Edit-2511 Local Interface")
             gr.Markdown(

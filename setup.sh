@@ -13,10 +13,12 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Parse command line arguments
-SHARE_MODE=""
+# Default settings
 HOST="127.0.0.1"
+PORT="7860"
+DO_RESET=false
 
+# Parse command line arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
         --share|--public)
@@ -25,6 +27,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --local)
             HOST="127.0.0.1"
+            shift
+            ;;
+        --port)
+            PORT="$2"
+            shift 2
+            ;;
+        --reset)
+            DO_RESET=true
             shift
             ;;
         *)
@@ -44,7 +54,7 @@ print_status() {
 }
 
 print_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
+    echo -e "${GREEN}[OK]${NC} $1"
 }
 
 print_warning() {
@@ -65,40 +75,53 @@ start_app() {
     echo ""
     echo "=================================================="
     echo " Starting Qwen-Image-Edit-2511"
+    echo " URL: http://${HOST}:${PORT}"
     if [ "$HOST" = "0.0.0.0" ]; then
-        echo " Access from any device on network"
-        echo " Local: http://127.0.0.1:7860"
+        echo " [Network mode - accessible from other devices]"
         # Get local IP
         if command_exists hostname; then
             LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
             if [ -n "$LOCAL_IP" ]; then
-                echo " Network: http://$LOCAL_IP:7860"
+                echo " Network: http://$LOCAL_IP:$PORT"
             fi
         fi
-    else
-        echo " Open browser to: http://127.0.0.1:7860"
     fi
     echo "=================================================="
     echo ""
-    python app.py --host "$HOST"
+    echo " Press Ctrl+C to stop the server"
+    echo ""
+    echo " TIP: If something goes wrong, run: ./setup.sh --reset"
+    echo ""
+    python app.py --host "$HOST" --port "$PORT"
 }
+
+# =============================================================================
+# Handle --reset flag
+# =============================================================================
+if [ "$DO_RESET" = true ]; then
+    echo "[RESET] Removing virtual environment..."
+    rm -rf .venv 2>/dev/null || true
+    echo "       Done. Continuing with fresh install..."
+    echo ""
+fi
 
 # =============================================================================
 # Check if already installed - AUTO START
 # =============================================================================
-if [ -d ".venv" ]; then
-    print_status "Virtual environment found, checking installation..."
+if [ -f ".venv/bin/python" ]; then
+    print_status "Checking installation..."
 
     # Activate virtual environment
-    source .venv/bin/activate 2>/dev/null
+    source .venv/bin/activate 2>/dev/null || true
 
     # Check if key packages are installed
-    if python -c "import gradio; import diffusers; import torch" 2>/dev/null; then
+    if .venv/bin/python -c "import gradio; import diffusers; import torch" 2>/dev/null; then
         print_success "All packages installed. Starting application..."
         start_app
         exit 0
     else
         print_status "Some packages missing, continuing with setup..."
+        echo ""
     fi
 fi
 
@@ -131,7 +154,7 @@ PYTHON_VERSION=$($PYTHON_CMD --version 2>&1 | awk '{print $2}')
 PYTHON_MAJOR=$(echo $PYTHON_VERSION | cut -d. -f1)
 PYTHON_MINOR=$(echo $PYTHON_VERSION | cut -d. -f2)
 
-print_status "Found Python $PYTHON_VERSION"
+echo "       Found Python $PYTHON_VERSION"
 
 # Check Python version is 3.10+
 if [ "$PYTHON_MAJOR" -lt 3 ] || ([ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 10 ]); then
@@ -146,15 +169,17 @@ echo ""
 echo "[2/6] Creating virtual environment..."
 
 if [ -d ".venv" ]; then
-    print_status "Virtual environment already exists, skipping creation."
+    echo "       Virtual environment exists, reusing it."
 else
     $PYTHON_CMD -m venv .venv
     if [ $? -ne 0 ]; then
         print_error "Failed to create virtual environment"
         echo "       Try: sudo apt install python3-venv (Ubuntu/Debian)"
+        echo ""
+        echo "TIP: If you have issues, try running: ./setup.sh --reset"
         exit 1
     fi
-    print_success "Virtual environment created successfully."
+    echo "       Virtual environment created."
 fi
 
 # =============================================================================
@@ -166,9 +191,11 @@ echo "[3/6] Activating virtual environment..."
 source .venv/bin/activate
 if [ $? -ne 0 ]; then
     print_error "Failed to activate virtual environment"
+    echo ""
+    echo "TIP: Try running: ./setup.sh --reset"
     exit 1
 fi
-print_success "Virtual environment activated."
+echo "       Activated."
 
 # =============================================================================
 # Step 4: Upgrade pip
@@ -177,7 +204,7 @@ echo ""
 echo "[4/6] Upgrading pip..."
 
 pip install --upgrade pip --quiet
-print_success "pip upgraded."
+echo "       Done."
 
 # =============================================================================
 # Step 5: Detect hardware
@@ -191,23 +218,17 @@ TORCH_INDEX_URL=""
 
 # Detect OS
 OS_TYPE=$(uname -s)
-print_status "Operating System: $OS_TYPE"
+echo "       Operating System: $OS_TYPE"
 
 # -----------------------------------------------------------------------------
 # Check for NVIDIA GPU
 # -----------------------------------------------------------------------------
-print_status "Checking for NVIDIA GPU..."
+echo "       Checking for NVIDIA GPU..."
 
 if command_exists nvidia-smi; then
     NVIDIA_GPU=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -n1)
     if [ -n "$NVIDIA_GPU" ]; then
-        print_success "NVIDIA GPU detected: $NVIDIA_GPU"
-
-        # Get all GPUs
-        nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null | while read line; do
-            echo "           $line"
-        done
-
+        echo "       [FOUND] NVIDIA: $NVIDIA_GPU"
         DEVICE_TYPE="cuda"
         TORCH_INDEX_URL="https://download.pytorch.org/whl/cu121"
     fi
@@ -217,7 +238,7 @@ fi
 # Check for Intel GPU (if no NVIDIA found)
 # -----------------------------------------------------------------------------
 if [ "$DEVICE_TYPE" = "cpu" ]; then
-    print_status "Checking for Intel GPU..."
+    echo "       Checking for Intel GPU..."
 
     INTEL_GPU_FOUND=false
 
@@ -225,8 +246,7 @@ if [ "$DEVICE_TYPE" = "cpu" ]; then
     if command_exists lspci; then
         INTEL_GPU=$(lspci | grep -i "VGA\|3D\|Display" | grep -i "Intel" | head -n1)
         if [ -n "$INTEL_GPU" ]; then
-            print_success "Intel GPU detected via lspci"
-            echo "           $INTEL_GPU"
+            echo "       [FOUND] Intel: $INTEL_GPU"
             INTEL_GPU_FOUND=true
         fi
     fi
@@ -238,7 +258,7 @@ if [ "$DEVICE_TYPE" = "cpu" ]; then
                 VENDOR=$(cat "$card" 2>/dev/null)
                 # Intel vendor ID is 0x8086
                 if [ "$VENDOR" = "0x8086" ]; then
-                    print_success "Intel GPU detected via sysfs"
+                    echo "       [FOUND] Intel GPU via sysfs"
                     INTEL_GPU_FOUND=true
                     break
                 fi
@@ -250,48 +270,35 @@ if [ "$DEVICE_TYPE" = "cpu" ]; then
     if [ "$INTEL_GPU_FOUND" = false ] && [ "$OS_TYPE" = "Darwin" ]; then
         INTEL_GPU=$(system_profiler SPDisplaysDataType 2>/dev/null | grep -i "Intel" | head -n1)
         if [ -n "$INTEL_GPU" ]; then
-            print_success "Intel GPU detected via system_profiler"
-            echo "           $INTEL_GPU"
+            echo "       [FOUND] Intel: $INTEL_GPU"
             INTEL_GPU_FOUND=true
         fi
     fi
 
-    # Check if it's an Arc GPU or newer Intel GPU that supports XPU
+    # Set XPU if Intel GPU found
     if [ "$INTEL_GPU_FOUND" = true ]; then
-        # Check for Arc specifically
-        if lspci 2>/dev/null | grep -qi "Arc"; then
-            print_success "Intel Arc GPU detected - will use XPU backend"
-            DEVICE_TYPE="xpu"
-            TORCH_INDEX_URL="https://download.pytorch.org/whl/xpu"
-        elif lspci 2>/dev/null | grep -qi "Xe\|Iris Xe\|UHD Graphics 7"; then
-            print_success "Intel Xe/Iris GPU detected - will try XPU backend"
-            DEVICE_TYPE="xpu"
-            TORCH_INDEX_URL="https://download.pytorch.org/whl/xpu"
-        else
-            print_warning "Intel GPU found but may not support XPU. Will try XPU backend."
-            DEVICE_TYPE="xpu"
-            TORCH_INDEX_URL="https://download.pytorch.org/whl/xpu"
-        fi
+        DEVICE_TYPE="xpu"
+        TORCH_INDEX_URL="https://download.pytorch.org/whl/xpu"
     fi
 fi
 
 # -----------------------------------------------------------------------------
-# Check for AMD GPU (ROCm) - Bonus support
+# Check for AMD GPU (ROCm)
 # -----------------------------------------------------------------------------
 if [ "$DEVICE_TYPE" = "cpu" ]; then
-    print_status "Checking for AMD GPU (ROCm)..."
+    echo "       Checking for AMD GPU (ROCm)..."
 
     if command_exists rocm-smi; then
         AMD_GPU=$(rocm-smi --showproductname 2>/dev/null | grep -i "GPU" | head -n1)
         if [ -n "$AMD_GPU" ]; then
-            print_success "AMD GPU with ROCm detected: $AMD_GPU"
+            echo "       [FOUND] AMD: $AMD_GPU"
             DEVICE_TYPE="rocm"
             TORCH_INDEX_URL="https://download.pytorch.org/whl/rocm6.0"
         fi
     elif command_exists rocminfo; then
         AMD_GPU=$(rocminfo 2>/dev/null | grep "Marketing Name" | head -n1 | cut -d: -f2 | xargs)
         if [ -n "$AMD_GPU" ]; then
-            print_success "AMD GPU with ROCm detected: $AMD_GPU"
+            echo "       [FOUND] AMD: $AMD_GPU"
             DEVICE_TYPE="rocm"
             TORCH_INDEX_URL="https://download.pytorch.org/whl/rocm6.0"
         fi
@@ -302,19 +309,13 @@ fi
 # Fallback to CPU
 # -----------------------------------------------------------------------------
 if [ "$DEVICE_TYPE" = "cpu" ]; then
-    print_warning "No dedicated GPU found, using CPU mode."
-    echo "           Note: CPU mode is very slow for image generation."
+    echo "       [INFO] No GPU found, using CPU mode."
+    echo "              Note: CPU is very slow for image generation."
 fi
 
 echo ""
 echo "=================================================="
-echo " Detected Configuration:"
-echo "   Device: $DEVICE_TYPE"
-if [ -n "$TORCH_INDEX_URL" ]; then
-    echo "   PyTorch Index: $TORCH_INDEX_URL"
-else
-    echo "   PyTorch Index: Default (CPU)"
-fi
+echo " Detected Device: $DEVICE_TYPE"
 echo "=================================================="
 echo ""
 
@@ -325,55 +326,46 @@ echo "[6/6] Installing packages..."
 echo ""
 
 # Install PyTorch based on detected hardware
-print_status "Installing PyTorch for $DEVICE_TYPE..."
+echo "       Installing PyTorch for $DEVICE_TYPE..."
 
 case $DEVICE_TYPE in
     "cuda")
-        pip install torch torchvision torchaudio --index-url "$TORCH_INDEX_URL" --quiet
+        pip install torch torchvision torchaudio --index-url "$TORCH_INDEX_URL"
         ;;
     "xpu")
-        pip install torch torchvision torchaudio --index-url "$TORCH_INDEX_URL" --quiet
-        print_status "Installing Intel Extension for PyTorch..."
-        pip install intel-extension-for-pytorch --quiet 2>/dev/null || {
+        pip install torch torchvision torchaudio --index-url "$TORCH_INDEX_URL"
+        echo ""
+        echo "       Installing Intel Extension for PyTorch..."
+        pip install intel-extension-for-pytorch 2>/dev/null || {
             print_warning "Could not install intel-extension-for-pytorch"
             echo "           XPU support will use native PyTorch XPU backend"
         }
         ;;
     "rocm")
-        pip install torch torchvision torchaudio --index-url "$TORCH_INDEX_URL" --quiet
+        pip install torch torchvision torchaudio --index-url "$TORCH_INDEX_URL"
         ;;
     *)
-        pip install torch torchvision torchaudio --quiet
+        pip install torch torchvision torchaudio
         ;;
 esac
 
-# Install core dependencies
-print_status "Installing core dependencies..."
-pip install "gradio>=4.0.0" --quiet
-pip install "numpy>=1.24.0" --quiet
-pip install "pillow>=10.0.0" --quiet
-pip install "huggingface_hub>=0.20.0" --quiet
+echo ""
+echo "       Installing core dependencies..."
+pip install gradio numpy pillow huggingface_hub
 
-# Install diffusers and related packages
-print_status "Installing diffusers and ML packages..."
-pip install "diffusers>=0.32.0" --quiet
-pip install "transformers>=4.40.0" --quiet
-pip install "accelerate>=0.30.0" --quiet
-pip install "sentencepiece>=0.1.99" --quiet
+echo ""
+echo "       Installing ML packages..."
+pip install diffusers transformers accelerate sentencepiece
 
-# Install GGUF support
-print_status "Installing GGUF support..."
-pip install "gguf>=0.6.0" --quiet
+echo ""
+echo "       Installing GGUF support..."
+pip install gguf
 
 echo ""
 echo "=================================================="
-print_success "Installation Complete!"
+echo " Installation Complete!"
+echo " Device: $DEVICE_TYPE"
 echo "=================================================="
-echo ""
-echo " Device configured: $DEVICE_TYPE"
-echo ""
-echo " First run will download the base model files (~2GB)."
-echo " GGUF model weights can be downloaded from the UI."
 echo ""
 
 # Start the application
