@@ -5,6 +5,8 @@ setlocal EnableDelayedExpansion
 :: Default settings
 set "HOST=127.0.0.1"
 set "PORT=7860"
+set "FOUND_CUDA=0"
+set "FOUND_XPU=0"
 set "DEVICE_TYPE=cpu"
 set "TORCH_INDEX_URL="
 set "SKIP_SETUP=0"
@@ -17,6 +19,9 @@ if /i "%~1"=="--public" set "HOST=0.0.0.0"
 if /i "%~1"=="--local" set "HOST=127.0.0.1"
 if /i "%~1"=="--port" set "PORT=%~2" & shift
 if /i "%~1"=="--reset" set "DO_RESET=1"
+if /i "%~1"=="--cuda" set "FORCE_DEVICE=cuda"
+if /i "%~1"=="--xpu" set "FORCE_DEVICE=xpu"
+if /i "%~1"=="--cpu" set "FORCE_DEVICE=cpu"
 shift
 goto parse_args
 
@@ -100,38 +105,52 @@ echo.
 echo [5/6] Detecting hardware...
 echo.
 
-:: Check for NVIDIA GPU using nvidia-smi
+:: Check for NVIDIA GPU
 echo       Checking for NVIDIA GPU...
 nvidia-smi >nul 2>&1
 if !errorlevel! equ 0 (
     for /f "tokens=*" %%i in ('nvidia-smi -L 2^>nul') do (
         echo       [FOUND] %%i
-        set "DEVICE_TYPE=cuda"
-        set "TORCH_INDEX_URL=https://download.pytorch.org/whl/cu121"
+        set "FOUND_CUDA=1"
     )
 )
-if "!DEVICE_TYPE!"=="cuda" goto show_config
 
 :: Check for Intel GPU using PowerShell
 echo       Checking for Intel GPU...
-for /f "tokens=*" %%i in ('powershell -NoProfile -Command "Get-CimInstance Win32_VideoController | Where-Object { $_.Name -match 'Intel' } | Select-Object -ExpandProperty Name" 2^>nul') do (
+for /f "tokens=*" %%i in ('powershell -NoProfile -Command "Get-CimInstance Win32_VideoController | Where-Object { $_.Name -match 'Intel' -and $_.Name -match 'Arc|Iris|UHD|Xe' } | Select-Object -ExpandProperty Name" 2^>nul') do (
     if not "%%i"=="" (
         echo       [FOUND] Intel: %%i
-        set "DEVICE_TYPE=xpu"
-        set "TORCH_INDEX_URL=https://download.pytorch.org/whl/xpu"
+        set "FOUND_XPU=1"
     )
 )
-if "!DEVICE_TYPE!"=="xpu" goto show_config
 
-echo       [INFO] No GPU found, using CPU mode.
-echo              Note: CPU is very slow for image generation.
-set "DEVICE_TYPE=cpu"
-set "TORCH_INDEX_URL="
+:: Determine which device to use
+if defined FORCE_DEVICE (
+    set "DEVICE_TYPE=!FORCE_DEVICE!"
+    echo.
+    echo       [FORCED] Using !FORCE_DEVICE! as requested
+) else if "!FOUND_CUDA!"=="1" (
+    set "DEVICE_TYPE=cuda"
+) else if "!FOUND_XPU!"=="1" (
+    set "DEVICE_TYPE=xpu"
+) else (
+    set "DEVICE_TYPE=cpu"
+    echo       [INFO] No supported GPU found, using CPU mode.
+    echo              Note: CPU is very slow for image generation.
+)
 
-:show_config
+:: Set PyTorch index URL based on device
+if "!DEVICE_TYPE!"=="cuda" set "TORCH_INDEX_URL=https://download.pytorch.org/whl/cu121"
+if "!DEVICE_TYPE!"=="xpu" set "TORCH_INDEX_URL=https://download.pytorch.org/whl/xpu"
+
 echo.
 echo ==================================================
-echo   Detected Device: !DEVICE_TYPE!
+echo   Available GPUs:
+if "!FOUND_CUDA!"=="1" echo     - NVIDIA CUDA
+if "!FOUND_XPU!"=="1" echo     - Intel XPU
+echo     - CPU (always available)
+echo.
+echo   Selected Device: !DEVICE_TYPE!
 echo ==================================================
 echo.
 
@@ -183,6 +202,7 @@ echo.
 echo   Press Ctrl+C to stop the server
 echo.
 echo   TIP: If something goes wrong, run: setup.bat --reset
+echo   TIP: Force device with: setup.bat --cuda or --xpu or --cpu
 echo.
 
 python app.py --host !HOST! --port !PORT!
