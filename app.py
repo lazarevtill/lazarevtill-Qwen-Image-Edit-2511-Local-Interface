@@ -513,19 +513,20 @@ def load_pipeline(model_name: str, device_choice: str):
             # Keep text encoder on CPU (uses ~15GB RAM), move only transformer to GPU
             print(f"Using hybrid mode: text encoder on CPU (RAM), transformer on GPU")
 
-            # Remove any accelerate hooks from text encoder that might try to move it to GPU
-            if hasattr(pipeline, 'text_encoder') and pipeline.text_encoder is not None:
-                from accelerate.hooks import remove_hook_from_module
-                try:
-                    remove_hook_from_module(pipeline.text_encoder, recurse=True)
-                    print("  Removed accelerate hooks from text encoder")
-                except:
-                    pass
-                # Ensure text encoder is on CPU
-                pipeline.text_encoder = pipeline.text_encoder.to("cpu")
-                print(f"  Text encoder on CPU (uses RAM)")
+            # First, remove ALL accelerate hooks - they cause automatic GPU transfers
+            from accelerate.hooks import remove_hook_from_module
+            try:
+                for name, module in pipeline.components.items():
+                    if module is not None:
+                        try:
+                            remove_hook_from_module(module, recurse=True)
+                        except:
+                            pass
+                print("  Removed accelerate hooks")
+            except Exception as e:
+                print(f"  Warning: Could not remove all hooks: {e}")
 
-            # Move transformer to GPU - this is the diffusion model
+            # Move transformer to GPU first (while text encoder is still not loaded fully)
             if hasattr(pipeline, 'transformer') and pipeline.transformer is not None:
                 pipeline.transformer = pipeline.transformer.to(device_str)
                 print(f"  Transformer moved to {device_str}")
@@ -535,11 +536,14 @@ def load_pipeline(model_name: str, device_choice: str):
                 pipeline.vae = pipeline.vae.to(device_str)
                 print(f"  VAE moved to {device_str}")
 
-            # Image processor/encoder if exists
-            if hasattr(pipeline, 'image_encoder') and pipeline.image_encoder is not None:
-                # Keep image encoder on CPU too if it's large
-                pipeline.image_encoder = pipeline.image_encoder.to("cpu")
-                print(f"  Image encoder on CPU")
+            # Explicitly keep text encoder on CPU with float32 for stability
+            if hasattr(pipeline, 'text_encoder') and pipeline.text_encoder is not None:
+                pipeline.text_encoder = pipeline.text_encoder.to("cpu").float()
+                pipeline.text_encoder.eval()
+                # Disable gradient computation for text encoder
+                for param in pipeline.text_encoder.parameters():
+                    param.requires_grad = False
+                print(f"  Text encoder kept on CPU (~15GB RAM)")
 
             # Enable memory optimizations
             try:
@@ -548,8 +552,32 @@ def load_pipeline(model_name: str, device_choice: str):
             except:
                 pass
 
-            # Store device info for inference
-            pipeline._execution_device = torch.device(device_str)
+            # Mark this pipeline as using hybrid mode
+            pipeline._hybrid_mode = True
+            pipeline._gpu_device = device_str
+
+            # Override the _execution_device property to prevent automatic device transfers
+            # The pipeline uses this to decide where to run operations
+            # We'll patch it so text encoder operations stay on CPU
+            original_encode_prompt = pipeline.encode_prompt
+
+            def patched_encode_prompt(prompt, image=None, device=None, num_images_per_prompt=1, prompt_embeds=None, prompt_embeds_mask=None):
+                # Force device to CPU for text encoding, then move result to GPU
+                result = original_encode_prompt(
+                    prompt=prompt,
+                    image=image,
+                    device="cpu",  # Force CPU for text encoder
+                    num_images_per_prompt=num_images_per_prompt,
+                    prompt_embeds=prompt_embeds,
+                    prompt_embeds_mask=prompt_embeds_mask,
+                )
+                # Move the embeddings to GPU after encoding
+                if isinstance(result, tuple):
+                    return tuple(r.to(device_str) if r is not None and hasattr(r, 'to') else r for r in result)
+                return result.to(device_str) if hasattr(result, 'to') else result
+
+            pipeline.encode_prompt = patched_encode_prompt
+            print("  Patched encode_prompt for hybrid mode")
     elif "xpu" in device_str:
         # Intel XPU
         pipeline = pipeline.to(device_str)
