@@ -533,15 +533,15 @@ def load_pipeline(model_name: str, device_choice: str):
             except Exception as e:
                 print(f"  Warning: Could not remove all hooks: {e}")
 
-            # Move transformer to GPU first (while text encoder is still not loaded fully)
+            # Move transformer to GPU with proper dtype
             if hasattr(pipeline, 'transformer') and pipeline.transformer is not None:
                 pipeline.transformer = pipeline.transformer.to(device_str)
                 print(f"  Transformer moved to {device_str}")
 
-            # Move VAE to GPU (it's small, ~100MB)
+            # Move VAE to GPU with float32 to avoid dtype issues with input images
             if hasattr(pipeline, 'vae') and pipeline.vae is not None:
-                pipeline.vae = pipeline.vae.to(device_str)
-                print(f"  VAE moved to {device_str}")
+                pipeline.vae = pipeline.vae.to(device_str).float()
+                print(f"  VAE moved to {device_str} (float32)")
 
             # Explicitly keep text encoder on CPU with float32 for stability
             if hasattr(pipeline, 'text_encoder') and pipeline.text_encoder is not None:

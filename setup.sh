@@ -367,10 +367,17 @@ echo "       Installing PyTorch for $DEVICE_TYPE..."
 
 case $DEVICE_TYPE in
     "cuda")
-        pip install torch torchvision torchaudio --index-url "$TORCH_INDEX_URL"
+        # Use --extra-index-url to also search PyPI for other packages
+        pip install torch torchvision torchaudio --extra-index-url "$TORCH_INDEX_URL" || {
+            print_warning "Failed with extra-index-url, trying default PyTorch..."
+            pip install torch torchvision torchaudio
+        }
         ;;
     "xpu")
-        pip install torch torchvision torchaudio --index-url "$TORCH_INDEX_URL"
+        pip install torch torchvision torchaudio --extra-index-url "$TORCH_INDEX_URL" || {
+            print_warning "Failed with extra-index-url, trying default PyTorch..."
+            pip install torch torchvision torchaudio
+        }
         echo ""
         echo "       Installing Intel Extension for PyTorch..."
         pip install intel-extension-for-pytorch 2>/dev/null || {
@@ -379,7 +386,10 @@ case $DEVICE_TYPE in
         }
         ;;
     "rocm")
-        pip install torch torchvision torchaudio --index-url "$TORCH_INDEX_URL"
+        pip install torch torchvision torchaudio --extra-index-url "$TORCH_INDEX_URL" || {
+            print_warning "Failed with extra-index-url, trying default PyTorch..."
+            pip install torch torchvision torchaudio
+        }
         ;;
     *)
         pip install torch torchvision torchaudio

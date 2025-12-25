@@ -160,11 +160,19 @@ echo.
 :: Install PyTorch based on detected hardware
 echo       Installing PyTorch for !DEVICE_TYPE!...
 if "!DEVICE_TYPE!"=="cuda" (
-    pip install torch torchvision torchaudio --index-url !TORCH_INDEX_URL!
+    pip install torch torchvision torchaudio --extra-index-url !TORCH_INDEX_URL!
+    if !errorlevel! neq 0 (
+        echo       [NOTE] Trying default PyTorch installation...
+        pip install torch torchvision torchaudio
+    )
     goto install_deps
 )
 if "!DEVICE_TYPE!"=="xpu" (
-    pip install torch torchvision torchaudio --index-url !TORCH_INDEX_URL!
+    pip install torch torchvision torchaudio --extra-index-url !TORCH_INDEX_URL!
+    if !errorlevel! neq 0 (
+        echo       [NOTE] Trying default PyTorch installation...
+        pip install torch torchvision torchaudio
+    )
     echo.
     echo       Installing Intel Extension for PyTorch...
     pip install intel-extension-for-pytorch 2>nul
