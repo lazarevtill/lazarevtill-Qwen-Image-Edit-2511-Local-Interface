@@ -533,15 +533,16 @@ def load_pipeline(model_name: str, device_choice: str):
             except Exception as e:
                 print(f"  Warning: Could not remove all hooks: {e}")
 
-            # Move transformer to GPU with proper dtype
+            # Move transformer to GPU - this is where most computation happens
             if hasattr(pipeline, 'transformer') and pipeline.transformer is not None:
                 pipeline.transformer = pipeline.transformer.to(device_str)
                 print(f"  Transformer moved to {device_str}")
 
-            # Move VAE to GPU with float32 to avoid dtype issues with input images
+            # Keep VAE on CPU - it uses 3D convolutions that don't have CUDA float32 kernels
+            # The VAE is small and fast even on CPU
             if hasattr(pipeline, 'vae') and pipeline.vae is not None:
-                pipeline.vae = pipeline.vae.to(device_str).float()
-                print(f"  VAE moved to {device_str} (float32)")
+                pipeline.vae = pipeline.vae.to("cpu").float()
+                print(f"  VAE kept on CPU (3D conv compatibility)")
 
             # Explicitly keep text encoder on CPU with float32 for stability
             if hasattr(pipeline, 'text_encoder') and pipeline.text_encoder is not None:
