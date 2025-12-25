@@ -513,8 +513,19 @@ def load_pipeline(model_name: str, device_choice: str):
             # Keep text encoder on CPU (uses ~15GB RAM), move only transformer to GPU
             print(f"Using hybrid mode: text encoder on CPU (RAM), transformer on GPU")
 
-            # Text encoder stays on CPU (already there after loading)
-            # Move only transformer to GPU - this is the diffusion model
+            # Remove any accelerate hooks from text encoder that might try to move it to GPU
+            if hasattr(pipeline, 'text_encoder') and pipeline.text_encoder is not None:
+                from accelerate.hooks import remove_hook_from_module
+                try:
+                    remove_hook_from_module(pipeline.text_encoder, recurse=True)
+                    print("  Removed accelerate hooks from text encoder")
+                except:
+                    pass
+                # Ensure text encoder is on CPU
+                pipeline.text_encoder = pipeline.text_encoder.to("cpu")
+                print(f"  Text encoder on CPU (uses RAM)")
+
+            # Move transformer to GPU - this is the diffusion model
             if hasattr(pipeline, 'transformer') and pipeline.transformer is not None:
                 pipeline.transformer = pipeline.transformer.to(device_str)
                 print(f"  Transformer moved to {device_str}")
@@ -524,9 +535,11 @@ def load_pipeline(model_name: str, device_choice: str):
                 pipeline.vae = pipeline.vae.to(device_str)
                 print(f"  VAE moved to {device_str}")
 
-            # Text encoder stays on CPU
-            if hasattr(pipeline, 'text_encoder') and pipeline.text_encoder is not None:
-                print(f"  Text encoder kept on CPU (uses RAM)")
+            # Image processor/encoder if exists
+            if hasattr(pipeline, 'image_encoder') and pipeline.image_encoder is not None:
+                # Keep image encoder on CPU too if it's large
+                pipeline.image_encoder = pipeline.image_encoder.to("cpu")
+                print(f"  Image encoder on CPU")
 
             # Enable memory optimizations
             try:
@@ -534,6 +547,9 @@ def load_pipeline(model_name: str, device_choice: str):
                 print("  Enabled attention slicing")
             except:
                 pass
+
+            # Store device info for inference
+            pipeline._execution_device = torch.device(device_str)
     elif "xpu" in device_str:
         # Intel XPU
         pipeline = pipeline.to(device_str)
