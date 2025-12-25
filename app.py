@@ -564,42 +564,43 @@ def load_pipeline(model_name: str, device_choice: str):
             pipeline._hybrid_mode = True
             pipeline._gpu_device = device_str
 
-            # Store the GPU device for the pipeline
+            # Store the GPU device and dtype for the pipeline
             gpu_device = device_str
+            gpu_dtype = compute_dtype  # bfloat16 for CUDA
 
-            # Patch encode_prompt to run on CPU and move results to GPU
+            # Patch encode_prompt to run on CPU and move results to GPU with correct dtype
             original_encode_prompt = pipeline.encode_prompt
 
             def patched_encode_prompt(*args, **kwargs):
                 kwargs['device'] = "cpu"
                 result = original_encode_prompt(*args, **kwargs)
                 if isinstance(result, tuple):
-                    return tuple(r.to(gpu_device) if r is not None and hasattr(r, 'to') else r for r in result)
-                return result.to(gpu_device) if hasattr(result, 'to') else result
+                    return tuple(r.to(device=gpu_device, dtype=gpu_dtype) if r is not None and hasattr(r, 'to') else r for r in result)
+                return result.to(device=gpu_device, dtype=gpu_dtype) if hasattr(result, 'to') else result
 
             pipeline.encode_prompt = patched_encode_prompt
             print("  Patched encode_prompt for hybrid mode")
 
-            # Patch prepare_latents to move VAE outputs to GPU
+            # Patch prepare_latents to move VAE outputs to GPU with correct dtype
             original_prepare_latents = pipeline.prepare_latents
 
             def patched_prepare_latents(*args, **kwargs):
                 result = original_prepare_latents(*args, **kwargs)
-                # Result is (latents, image_latents) - move both to GPU
+                # Result is (latents, image_latents) - move both to GPU with correct dtype
                 if isinstance(result, tuple):
-                    return tuple(r.to(gpu_device) if r is not None and hasattr(r, 'to') else r for r in result)
-                return result.to(gpu_device) if hasattr(result, 'to') else result
+                    return tuple(r.to(device=gpu_device, dtype=gpu_dtype) if r is not None and hasattr(r, 'to') else r for r in result)
+                return result.to(device=gpu_device, dtype=gpu_dtype) if hasattr(result, 'to') else result
 
             pipeline.prepare_latents = patched_prepare_latents
             print("  Patched prepare_latents for hybrid mode")
 
-            # Patch _encode_vae_image to keep VAE on CPU but return GPU tensors
+            # Patch _encode_vae_image to keep VAE on CPU but return GPU tensors with correct dtype
             if hasattr(pipeline, '_encode_vae_image'):
                 original_encode_vae = pipeline._encode_vae_image
 
                 def patched_encode_vae(*args, **kwargs):
                     result = original_encode_vae(*args, **kwargs)
-                    return result.to(gpu_device) if hasattr(result, 'to') else result
+                    return result.to(device=gpu_device, dtype=gpu_dtype) if hasattr(result, 'to') else result
 
                 pipeline._encode_vae_image = patched_encode_vae
                 print("  Patched _encode_vae_image for hybrid mode")
