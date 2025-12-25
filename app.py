@@ -447,9 +447,35 @@ def load_pipeline(model_name: str, device_choice: str):
         pipeline_source = BASE_MODEL_REPO
         print(f"Using HuggingFace pipeline: {pipeline_source}")
 
+    # Check VRAM for CUDA to decide on text encoder loading strategy
+    use_8bit_text_encoder = False
+    if "cuda" in device_str:
+        try:
+            vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            # Text encoder is ~15GB, so we need 8-bit quantization for < 24GB VRAM
+            if vram_gb < 24:
+                use_8bit_text_encoder = True
+                print(f"VRAM ({vram_gb:.1f}GB) < 24GB: Will attempt 8-bit text encoder quantization")
+        except:
+            use_8bit_text_encoder = True  # Assume limited VRAM
+
     # Load the full pipeline with the quantized transformer
     # Auto-retry with force_download if cache is corrupted
     pipeline = None
+
+    # Try to load text encoder with 8-bit quantization for limited VRAM
+    text_encoder_quantization_config = None
+    if use_8bit_text_encoder:
+        try:
+            from transformers import BitsAndBytesConfig
+            text_encoder_quantization_config = BitsAndBytesConfig(
+                load_in_8bit=True,
+            )
+            print("Using 8-bit quantization for text encoder")
+        except ImportError:
+            print("bitsandbytes not available, text encoder will use full precision")
+            print("Install with: pip install bitsandbytes")
+
     for attempt in range(2):
         try:
             force_download = (attempt > 0)
@@ -466,12 +492,22 @@ def load_pipeline(model_name: str, device_choice: str):
                     force_download=True,
                 )
 
-            pipeline = QwenImageEditPlusPipeline.from_pretrained(
-                pipeline_source,
-                transformer=transformer,
-                torch_dtype=compute_dtype,
-                force_download=force_download if pipeline_source == BASE_MODEL_REPO else False,
-            )
+            # Load pipeline with optional text encoder quantization
+            if text_encoder_quantization_config is not None:
+                pipeline = QwenImageEditPlusPipeline.from_pretrained(
+                    pipeline_source,
+                    transformer=transformer,
+                    torch_dtype=compute_dtype,
+                    text_encoder_quantization_config=text_encoder_quantization_config,
+                    force_download=force_download if pipeline_source == BASE_MODEL_REPO else False,
+                )
+            else:
+                pipeline = QwenImageEditPlusPipeline.from_pretrained(
+                    pipeline_source,
+                    transformer=transformer,
+                    torch_dtype=compute_dtype,
+                    force_download=force_download if pipeline_source == BASE_MODEL_REPO else False,
+                )
             break  # Success, exit retry loop
         except (OSError, EnvironmentError) as e:
             error_msg = str(e).lower()
@@ -483,6 +519,13 @@ def load_pipeline(model_name: str, device_choice: str):
                 continue  # Retry with force_download
             else:
                 raise  # Re-raise if not a cache error or already retried
+        except TypeError as e:
+            # Pipeline might not support text_encoder_quantization_config
+            if "text_encoder_quantization_config" in str(e) and text_encoder_quantization_config is not None:
+                print("Pipeline doesn't support text_encoder_quantization_config, loading without it...")
+                text_encoder_quantization_config = None
+                continue
+            raise
 
     if pipeline is None:
         raise RuntimeError("Failed to load pipeline after retries")
@@ -492,30 +535,59 @@ def load_pipeline(model_name: str, device_choice: str):
         # CPU mode - no special handling needed
         pass
     elif "cuda" in device_str:
-        # NVIDIA CUDA - use sequential CPU offload for memory efficiency
-        # This moves each component to GPU only when needed, then back to CPU
-        # Great for systems with lots of RAM (64GB+) but limited VRAM (8-12GB)
+        # NVIDIA CUDA with limited VRAM (8-12GB)
+        # The text encoder is ~15GB which won't fit in VRAM
+        # We need to use CPU offloading carefully
+
+        # Get available VRAM
         try:
-            pipeline.enable_sequential_cpu_offload(device=device_str)
-            print(f"Enabled sequential CPU offload on {device_str}")
+            vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+        except:
+            vram_gb = 8  # Assume 8GB if can't detect
 
-            # Enable attention slicing to reduce VRAM peak usage
-            try:
-                pipeline.enable_attention_slicing(slice_size="auto")
-                print("Enabled attention slicing for lower VRAM usage")
-            except Exception:
-                pass  # Not all pipelines support this
+        print(f"Detected VRAM: {vram_gb:.1f} GB")
 
-        except Exception as e:
-            print(f"Sequential offload failed: {e}, trying direct GPU load...")
-            # Fallback: try loading directly to GPU (needs more VRAM)
+        # Clear any existing CUDA cache
+        torch.cuda.empty_cache()
+
+        if vram_gb >= 24:
+            # Enough VRAM for full model - load everything to GPU
+            pipeline = pipeline.to(device_str)
+            print(f"Pipeline moved to {device_str} (full GPU mode)")
+        else:
+            # Limited VRAM - use model CPU offload
+            # This is smarter than sequential - it analyzes model and decides what to offload
+            print("Using CPU offload mode for limited VRAM...")
+
             try:
-                pipeline = pipeline.to(device_str)
-                print(f"Pipeline moved to {device_str}")
-            except Exception as e2:
-                print(f"Direct GPU load failed: {e2}")
-                print("Falling back to CPU mode")
-                # Keep on CPU as last resort
+                # enable_model_cpu_offload places hooks to move modules to GPU only when needed
+                # The key difference from sequential: it keeps track of execution order
+                pipeline.enable_model_cpu_offload(gpu_id=0)
+                print(f"Enabled model CPU offload on cuda:0")
+
+                # Enable VAE slicing to process in chunks
+                try:
+                    pipeline.enable_vae_slicing()
+                    print("Enabled VAE slicing")
+                except:
+                    pass
+
+                # Enable attention slicing to reduce VRAM peak usage
+                try:
+                    pipeline.enable_attention_slicing(slice_size=1)
+                    print("Enabled attention slicing")
+                except:
+                    pass
+
+            except Exception as e:
+                print(f"CPU offload failed: {e}")
+                # Last resort: just try to load to GPU and hope for the best
+                try:
+                    pipeline = pipeline.to(device_str)
+                    print(f"Fallback: Pipeline moved to {device_str}")
+                except Exception as e2:
+                    print(f"GPU load failed: {e2}, keeping on CPU")
+                    # Pipeline stays on CPU
     elif "xpu" in device_str:
         # Intel XPU
         pipeline = pipeline.to(device_str)
@@ -609,15 +681,9 @@ def infer(
         devices = detect_available_devices()
         device_str = devices[device_choice]["device_str"]
 
-        # Generator device handling
-        if "cuda" in device_str:
-            gen_device = device_str
-        elif "xpu" in device_str:
-            gen_device = device_str
-        else:
-            gen_device = "cpu"
-
-        generator = torch.Generator(device=gen_device).manual_seed(seed)
+        # Generator should be on CPU for offloading modes
+        # The pipeline will handle moving tensors as needed
+        generator = torch.Generator(device="cpu").manual_seed(seed)
 
         # Handle default dimensions
         if height == 256 and width == 256:
