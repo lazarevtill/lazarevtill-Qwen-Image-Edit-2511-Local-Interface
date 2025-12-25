@@ -492,8 +492,30 @@ def load_pipeline(model_name: str, device_choice: str):
         # CPU mode - no special handling needed
         pass
     elif "cuda" in device_str:
-        # NVIDIA CUDA - use CPU offload for memory efficiency
-        pipeline.enable_model_cpu_offload()
+        # NVIDIA CUDA - use sequential CPU offload for memory efficiency
+        # This moves each component to GPU only when needed, then back to CPU
+        # Great for systems with lots of RAM (64GB+) but limited VRAM (8-12GB)
+        try:
+            pipeline.enable_sequential_cpu_offload(device=device_str)
+            print(f"Enabled sequential CPU offload on {device_str}")
+
+            # Enable attention slicing to reduce VRAM peak usage
+            try:
+                pipeline.enable_attention_slicing(slice_size="auto")
+                print("Enabled attention slicing for lower VRAM usage")
+            except Exception:
+                pass  # Not all pipelines support this
+
+        except Exception as e:
+            print(f"Sequential offload failed: {e}, trying direct GPU load...")
+            # Fallback: try loading directly to GPU (needs more VRAM)
+            try:
+                pipeline = pipeline.to(device_str)
+                print(f"Pipeline moved to {device_str}")
+            except Exception as e2:
+                print(f"Direct GPU load failed: {e2}")
+                print("Falling back to CPU mode")
+                # Keep on CPU as last resort
     elif "xpu" in device_str:
         # Intel XPU
         pipeline = pipeline.to(device_str)
