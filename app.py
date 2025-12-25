@@ -594,7 +594,20 @@ def load_pipeline(model_name: str, device_choice: str):
             pipeline.prepare_latents = patched_prepare_latents
             print("  Patched prepare_latents for hybrid mode")
 
-            # Patch _encode_vae_image to keep VAE on CPU but return GPU tensors with correct dtype
+            # Patch VAE encode to ensure input is float32 (VAE needs float32 for 3D convs)
+            if hasattr(pipeline, 'vae') and pipeline.vae is not None:
+                original_vae_encode = pipeline.vae.encode
+
+                def patched_vae_encode(x, *args, **kwargs):
+                    # Ensure input is float32 and on CPU for VAE
+                    x = x.to(device="cpu", dtype=torch.float32)
+                    result = original_vae_encode(x, *args, **kwargs)
+                    return result
+
+                pipeline.vae.encode = patched_vae_encode
+                print("  Patched VAE.encode for hybrid mode")
+
+            # Patch _encode_vae_image to return GPU tensors with correct dtype
             if hasattr(pipeline, '_encode_vae_image'):
                 original_encode_vae = pipeline._encode_vae_image
 
