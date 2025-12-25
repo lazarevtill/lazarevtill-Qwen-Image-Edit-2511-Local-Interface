@@ -514,15 +514,22 @@ def load_pipeline(model_name: str, device_choice: str):
             print(f"Using hybrid mode: text encoder on CPU (RAM), transformer on GPU")
 
             # First, remove ALL accelerate hooks - they cause automatic GPU transfers
-            from accelerate.hooks import remove_hook_from_module
+            # Need to do this recursively on all submodules
+            def remove_all_hooks(module):
+                """Recursively remove all accelerate hooks from a module."""
+                if hasattr(module, '_hf_hook'):
+                    delattr(module, '_hf_hook')
+                if hasattr(module, '_old_forward'):
+                    module.forward = module._old_forward
+                    delattr(module, '_old_forward')
+                for child in module.children():
+                    remove_all_hooks(child)
+
             try:
-                for name, module in pipeline.components.items():
-                    if module is not None:
-                        try:
-                            remove_hook_from_module(module, recurse=True)
-                        except:
-                            pass
-                print("  Removed accelerate hooks")
+                for name, component in pipeline.components.items():
+                    if component is not None and hasattr(component, 'children'):
+                        remove_all_hooks(component)
+                print("  Removed accelerate hooks from all components")
             except Exception as e:
                 print(f"  Warning: Could not remove all hooks: {e}")
 
@@ -560,21 +567,19 @@ def load_pipeline(model_name: str, device_choice: str):
             # The pipeline uses this to decide where to run operations
             # We'll patch it so text encoder operations stay on CPU
             original_encode_prompt = pipeline.encode_prompt
+            gpu_device = device_str  # Capture for closure
 
-            def patched_encode_prompt(prompt, image=None, device=None, num_images_per_prompt=1, prompt_embeds=None, prompt_embeds_mask=None):
-                # Force device to CPU for text encoding, then move result to GPU
-                result = original_encode_prompt(
-                    prompt=prompt,
-                    image=image,
-                    device="cpu",  # Force CPU for text encoder
-                    num_images_per_prompt=num_images_per_prompt,
-                    prompt_embeds=prompt_embeds,
-                    prompt_embeds_mask=prompt_embeds_mask,
-                )
+            def patched_encode_prompt(*args, **kwargs):
+                # Force device to CPU for text encoding
+                kwargs['device'] = "cpu"
+
+                # Call original with CPU device
+                result = original_encode_prompt(*args, **kwargs)
+
                 # Move the embeddings to GPU after encoding
                 if isinstance(result, tuple):
-                    return tuple(r.to(device_str) if r is not None and hasattr(r, 'to') else r for r in result)
-                return result.to(device_str) if hasattr(result, 'to') else result
+                    return tuple(r.to(gpu_device) if r is not None and hasattr(r, 'to') else r for r in result)
+                return result.to(gpu_device) if hasattr(result, 'to') else result
 
             pipeline.encode_prompt = patched_encode_prompt
             print("  Patched encode_prompt for hybrid mode")
