@@ -564,26 +564,45 @@ def load_pipeline(model_name: str, device_choice: str):
             pipeline._hybrid_mode = True
             pipeline._gpu_device = device_str
 
-            # Override the _execution_device property to prevent automatic device transfers
-            # The pipeline uses this to decide where to run operations
-            # We'll patch it so text encoder operations stay on CPU
+            # Store the GPU device for the pipeline
+            gpu_device = device_str
+
+            # Patch encode_prompt to run on CPU and move results to GPU
             original_encode_prompt = pipeline.encode_prompt
-            gpu_device = device_str  # Capture for closure
 
             def patched_encode_prompt(*args, **kwargs):
-                # Force device to CPU for text encoding
                 kwargs['device'] = "cpu"
-
-                # Call original with CPU device
                 result = original_encode_prompt(*args, **kwargs)
-
-                # Move the embeddings to GPU after encoding
                 if isinstance(result, tuple):
                     return tuple(r.to(gpu_device) if r is not None and hasattr(r, 'to') else r for r in result)
                 return result.to(gpu_device) if hasattr(result, 'to') else result
 
             pipeline.encode_prompt = patched_encode_prompt
             print("  Patched encode_prompt for hybrid mode")
+
+            # Patch prepare_latents to move VAE outputs to GPU
+            original_prepare_latents = pipeline.prepare_latents
+
+            def patched_prepare_latents(*args, **kwargs):
+                result = original_prepare_latents(*args, **kwargs)
+                # Result is (latents, image_latents) - move both to GPU
+                if isinstance(result, tuple):
+                    return tuple(r.to(gpu_device) if r is not None and hasattr(r, 'to') else r for r in result)
+                return result.to(gpu_device) if hasattr(result, 'to') else result
+
+            pipeline.prepare_latents = patched_prepare_latents
+            print("  Patched prepare_latents for hybrid mode")
+
+            # Patch _encode_vae_image to keep VAE on CPU but return GPU tensors
+            if hasattr(pipeline, '_encode_vae_image'):
+                original_encode_vae = pipeline._encode_vae_image
+
+                def patched_encode_vae(*args, **kwargs):
+                    result = original_encode_vae(*args, **kwargs)
+                    return result.to(gpu_device) if hasattr(result, 'to') else result
+
+                pipeline._encode_vae_image = patched_encode_vae
+                print("  Patched _encode_vae_image for hybrid mode")
     elif "xpu" in device_str:
         # Intel XPU
         pipeline = pipeline.to(device_str)
