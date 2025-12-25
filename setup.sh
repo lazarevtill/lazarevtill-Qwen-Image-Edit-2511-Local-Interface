@@ -398,6 +398,17 @@ echo ""
 echo "       Installing GGUF support..."
 pip install gguf
 
+# Install bitsandbytes for 8-bit quantization (CUDA only, helps with limited VRAM)
+if [ "$DEVICE_TYPE" = "cuda" ]; then
+    echo ""
+    echo "       Installing bitsandbytes for 8-bit quantization..."
+    pip install bitsandbytes 2>/dev/null || {
+        print_warning "Could not install bitsandbytes"
+        echo "           8-bit text encoder quantization will not be available"
+        echo "           This is optional - needed only for GPUs with < 24GB VRAM"
+    }
+fi
+
 echo ""
 echo "=================================================="
 echo " Installation Complete!"
