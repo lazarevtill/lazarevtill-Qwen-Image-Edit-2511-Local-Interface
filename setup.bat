@@ -140,7 +140,7 @@ if defined FORCE_DEVICE (
 )
 
 :: Set PyTorch index URL based on device
-if "!DEVICE_TYPE!"=="cuda" set "TORCH_INDEX_URL=https://download.pytorch.org/whl/cu121"
+if "!DEVICE_TYPE!"=="cuda" set "TORCH_INDEX_URL=https://download.pytorch.org/whl/cu124"
 if "!DEVICE_TYPE!"=="xpu" set "TORCH_INDEX_URL=https://download.pytorch.org/whl/xpu"
 
 echo.
@@ -163,8 +163,18 @@ if "!DEVICE_TYPE!"=="cuda" (
     :: Use --index-url to prioritize CUDA wheels over CPU-only from PyPI
     pip install torch torchvision torchaudio --index-url !TORCH_INDEX_URL!
     if !errorlevel! neq 0 (
-        echo       [NOTE] Trying with extra-index-url...
-        pip install torch torchvision torchaudio --extra-index-url !TORCH_INDEX_URL!
+        echo       [NOTE] Trying CUDA 12.1...
+        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+        if !errorlevel! neq 0 (
+            echo       [NOTE] Trying PyTorch nightly with CUDA...
+            pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu124
+            if !errorlevel! neq 0 (
+                echo       [WARNING] Could not install CUDA PyTorch. Your Python version may not be supported.
+                echo       [WARNING] Consider using Python 3.10-3.12 for CUDA support.
+                echo       [NOTE] Falling back to CPU-only PyTorch...
+                pip install torch torchvision torchaudio
+            )
+        )
     )
     goto install_deps
 )
