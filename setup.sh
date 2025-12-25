@@ -367,16 +367,23 @@ echo "       Installing PyTorch for $DEVICE_TYPE..."
 
 case $DEVICE_TYPE in
     "cuda")
-        # Use --extra-index-url to also search PyPI for other packages
-        pip install torch torchvision torchaudio --extra-index-url "$TORCH_INDEX_URL" || {
-            print_warning "Failed with extra-index-url, trying default PyTorch..."
-            pip install torch torchvision torchaudio
+        # Use --index-url to prioritize CUDA wheels over CPU-only from PyPI
+        pip install torch torchvision torchaudio --index-url "$TORCH_INDEX_URL" || {
+            print_warning "Failed with index-url, trying extra-index-url..."
+            pip install torch torchvision torchaudio --extra-index-url "$TORCH_INDEX_URL" || {
+                print_warning "Failed with extra-index-url, trying default PyTorch..."
+                pip install torch torchvision torchaudio
+            }
         }
         ;;
     "xpu")
-        pip install torch torchvision torchaudio --extra-index-url "$TORCH_INDEX_URL" || {
-            print_warning "Failed with extra-index-url, trying default PyTorch..."
-            pip install torch torchvision torchaudio
+        # Use --index-url to prioritize XPU wheels
+        pip install torch torchvision torchaudio --index-url "$TORCH_INDEX_URL" || {
+            print_warning "Failed with index-url, trying extra-index-url..."
+            pip install torch torchvision torchaudio --extra-index-url "$TORCH_INDEX_URL" || {
+                print_warning "Failed with extra-index-url, trying default PyTorch..."
+                pip install torch torchvision torchaudio
+            }
         }
         echo ""
         echo "       Installing Intel Extension for PyTorch..."
@@ -386,9 +393,13 @@ case $DEVICE_TYPE in
         }
         ;;
     "rocm")
-        pip install torch torchvision torchaudio --extra-index-url "$TORCH_INDEX_URL" || {
-            print_warning "Failed with extra-index-url, trying default PyTorch..."
-            pip install torch torchvision torchaudio
+        # Use --index-url to prioritize ROCm wheels
+        pip install torch torchvision torchaudio --index-url "$TORCH_INDEX_URL" || {
+            print_warning "Failed with index-url, trying extra-index-url..."
+            pip install torch torchvision torchaudio --extra-index-url "$TORCH_INDEX_URL" || {
+                print_warning "Failed with extra-index-url, trying default PyTorch..."
+                pip install torch torchvision torchaudio
+            }
         }
         ;;
     *)

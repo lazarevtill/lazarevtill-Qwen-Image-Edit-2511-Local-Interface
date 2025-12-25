@@ -569,54 +569,95 @@ def load_pipeline(model_name: str, device_choice: str):
             gpu_dtype = compute_dtype  # bfloat16 for CUDA
 
             # Patch encode_prompt to run on CPU and move results to GPU with correct dtype
-            original_encode_prompt = pipeline.encode_prompt
+            _orig_encode_prompt = pipeline.encode_prompt
+            _gpu_dev = gpu_device
+            _gpu_dt = gpu_dtype
 
-            def patched_encode_prompt(*args, **kwargs):
+            def patched_encode_prompt(*args, _orig=_orig_encode_prompt, _dev=_gpu_dev, _dt=_gpu_dt, **kwargs):
                 kwargs['device'] = "cpu"
-                result = original_encode_prompt(*args, **kwargs)
+                result = _orig(*args, **kwargs)
                 if isinstance(result, tuple):
-                    return tuple(r.to(device=gpu_device, dtype=gpu_dtype) if r is not None and hasattr(r, 'to') else r for r in result)
-                return result.to(device=gpu_device, dtype=gpu_dtype) if hasattr(result, 'to') else result
+                    return tuple(r.to(device=_dev, dtype=_dt) if r is not None and hasattr(r, 'to') else r for r in result)
+                return result.to(device=_dev, dtype=_dt) if hasattr(result, 'to') else result
 
             pipeline.encode_prompt = patched_encode_prompt
             print("  Patched encode_prompt for hybrid mode")
 
             # Patch prepare_latents to move VAE outputs to GPU with correct dtype
-            original_prepare_latents = pipeline.prepare_latents
+            _orig_prepare_latents = pipeline.prepare_latents
 
-            def patched_prepare_latents(*args, **kwargs):
-                result = original_prepare_latents(*args, **kwargs)
+            def patched_prepare_latents(*args, _orig=_orig_prepare_latents, _dev=_gpu_dev, _dt=_gpu_dt, **kwargs):
+                result = _orig(*args, **kwargs)
                 # Result is (latents, image_latents) - move both to GPU with correct dtype
                 if isinstance(result, tuple):
-                    return tuple(r.to(device=gpu_device, dtype=gpu_dtype) if r is not None and hasattr(r, 'to') else r for r in result)
-                return result.to(device=gpu_device, dtype=gpu_dtype) if hasattr(result, 'to') else result
+                    return tuple(r.to(device=_dev, dtype=_dt) if r is not None and hasattr(r, 'to') else r for r in result)
+                return result.to(device=_dev, dtype=_dt) if hasattr(result, 'to') else result
 
             pipeline.prepare_latents = patched_prepare_latents
             print("  Patched prepare_latents for hybrid mode")
 
-            # Patch VAE encode to ensure input is float32 (VAE needs float32 for 3D convs)
+            # Patch VAE to ensure all inputs are float32 on CPU
+            # The VAE uses 3D convolutions that only work with float32 on CPU
             if hasattr(pipeline, 'vae') and pipeline.vae is not None:
-                original_vae_encode = pipeline.vae.encode
+                vae = pipeline.vae
 
-                def patched_vae_encode(x, *args, **kwargs):
+                # Patch the VAE's forward method to handle dtype conversion
+                _orig_vae_forward = vae.forward
+
+                def patched_vae_forward(sample, *args, _orig=_orig_vae_forward, **kwargs):
+                    # Ensure sample is float32 and on CPU
+                    sample = sample.to(device="cpu", dtype=torch.float32)
+                    return _orig(sample, *args, **kwargs)
+
+                vae.forward = patched_vae_forward
+
+                # Patch VAE encode method
+                _orig_vae_encode = vae.encode
+
+                def patched_vae_encode(x, *args, _orig=_orig_vae_encode, **kwargs):
                     # Ensure input is float32 and on CPU for VAE
                     x = x.to(device="cpu", dtype=torch.float32)
-                    result = original_vae_encode(x, *args, **kwargs)
-                    return result
+                    return _orig(x, *args, **kwargs)
 
-                pipeline.vae.encode = patched_vae_encode
-                print("  Patched VAE.encode for hybrid mode")
+                vae.encode = patched_vae_encode
+
+                # Patch VAE decode method (for final image generation)
+                _orig_vae_decode = vae.decode
+
+                def patched_vae_decode(z, *args, _orig=_orig_vae_decode, **kwargs):
+                    # Move latents to CPU and float32 for VAE decoding
+                    z = z.to(device="cpu", dtype=torch.float32)
+                    return _orig(z, *args, **kwargs)
+
+                vae.decode = patched_vae_decode
+                print("  Patched VAE (forward/encode/decode) for hybrid mode")
 
             # Patch _encode_vae_image to return GPU tensors with correct dtype
             if hasattr(pipeline, '_encode_vae_image'):
-                original_encode_vae = pipeline._encode_vae_image
+                _orig_encode_vae = pipeline._encode_vae_image
+                _gpu_dev = gpu_device
+                _gpu_dt = gpu_dtype
 
-                def patched_encode_vae(*args, **kwargs):
-                    result = original_encode_vae(*args, **kwargs)
-                    return result.to(device=gpu_device, dtype=gpu_dtype) if hasattr(result, 'to') else result
+                def patched_encode_vae(*args, _orig=_orig_encode_vae, _dev=_gpu_dev, _dt=_gpu_dt, **kwargs):
+                    result = _orig(*args, **kwargs)
+                    return result.to(device=_dev, dtype=_dt) if hasattr(result, 'to') else result
 
                 pipeline._encode_vae_image = patched_encode_vae
                 print("  Patched _encode_vae_image for hybrid mode")
+
+            # Patch image_processor if it exists (handles image preprocessing)
+            if hasattr(pipeline, 'image_processor') and pipeline.image_processor is not None:
+                _orig_preprocess = pipeline.image_processor.preprocess
+
+                def patched_preprocess(image, *args, _orig=_orig_preprocess, **kwargs):
+                    result = _orig(image, *args, **kwargs)
+                    # Keep preprocessed images as float32 for VAE compatibility
+                    if hasattr(result, 'to'):
+                        return result.to(dtype=torch.float32)
+                    return result
+
+                pipeline.image_processor.preprocess = patched_preprocess
+                print("  Patched image_processor.preprocess for hybrid mode")
     elif "xpu" in device_str:
         # Intel XPU
         pipeline = pipeline.to(device_str)
